@@ -3,6 +3,7 @@
 #include "main.h"
 #include "Ez-Template/api.hpp"
 #include "api.h"
+#include "pros/misc.h"
 #include "pros/rtos.hpp"
 
 
@@ -10,7 +11,11 @@
 // For installation, upgrading, documentations, and tutorials, check out our website!
 // https://ez-robotics.github.io/EZ-Template/
 /////
+// Toggle state variable
+bool motorOn = false;
 
+// For edge detection
+bool lastButtonState = false;
 // Chassis constructor
 ez::Drive chassis(
     // These are your drive motors, the first motor is used for sensing!
@@ -33,6 +38,7 @@ inline pros::Motor score(18);
 
 // 3. Define your piston
 inline ez::Piston match_load('A', false);
+inline ez::Piston wing('B', false);
   
 // - `8` and `9` are smart ports (making these negative will reverse the sensor)
 //  - you should get positive values on the encoders going FORWARD and RIGHT
@@ -75,22 +81,7 @@ void initialize() {
   // chassis.opcontrol_curve_buttons_right_set(pros::E_CONTROLLER_DIGITAL_Y, pros::E_CONTROLLER_DIGITAL_A);
 
   // Autonomous Selector using LLEMU
-  ez::as::auton_selector.autons_add({
-      {"Drive\n\nDrive forward and come back", drive_example},
-      {"Turn\n\nTurn 3 times.", turn_example},
-      {"Drive and Turn\n\nDrive forward, turn, come back", drive_and_turn},
-      {"Drive and Turn\n\nSlow down during drive", wait_until_change_speed},
-      {"Swing Turn\n\nSwing in an 'S' curve", swing_example},
-      {"Motion Chaining\n\nDrive forward, turn, and come back, but blend everything together :D", motion_chaining},
-      {"Combine all 3 movements", combining_movements},
-      {"Interference\n\nAfter driving forward, robot performs differently if interfered or not", interfered_example},
-      {"Simple Odom\n\nThis is the same as the drive example, but it uses odom instead!", odom_drive_example},
-      {"Pure Pursuit\n\nGo to (0, 30) and pass through (6, 10) on the way.  Come back to (0, 0)", odom_pure_pursuit_example},
-      {"Pure Pursuit Wait Until\n\nGo to (24, 24) but start running an intake once the robot passes (12, 24)", odom_pure_pursuit_wait_until_example},
-      {"Boomerang\n\nGo to (0, 24, 45) then come back to (0, 0, 0)", odom_boomerang_example},
-      {"Boomerang Pure Pursuit\n\nGo to (0, 24, 45) on the way to (24, 24) then come back to (0, 0, 0)", odom_boomerang_injected_pure_pursuit_example},
-      {"Measure Offsets\n\nThis will turn the robot a bunch of times and calculate your offsets for your tracking wheels.", measure_offsets},
-  });
+  ez::as::auton_selector.autons_add({});
 
   // Initialize chassis and auton selector
   chassis.initialize();
@@ -137,11 +128,16 @@ void autonomous() {
   chassis.drive_sensor_reset();               // Reset drive sensors to 0
   chassis.odom_xyt_set(0_in, 0_in, 0_deg);    // Set the current position, you can start at a specific position with this
   chassis.drive_brake_set(MOTOR_BRAKE_HOLD);  
-  
+
+    // If the LLEMU/auton selector is enabled, call the selected auton
+  // This lets you pick autons from the LCD/selector instead of hardcoding here
+
+
+  // Set motors to hold.  This helps autonomous consistency
   // Set motors to hold.  This helps autonomous consistency
 
 
-  chassis.pid_drive_set(10_in,110);
+  chassis.pid_drive_set(12_in,110);
   chassis.pid_wait();
 
   chassis.pid_turn_set(90_deg,90);
@@ -149,17 +145,17 @@ void autonomous() {
 
   bottom_intake.move(-127);
 
-  chassis.pid_drive_set(35_in,30);
+  chassis.pid_drive_set(33_in,45);
   chassis.pid_wait();
   pros::delay(500);
 
-  chassis.pid_drive_set(-30_in,30);
+  chassis.pid_drive_set(-30_in,60);
   chassis.pid_wait();
 
   chassis.pid_turn_set(0_deg,90);
   chassis.pid_wait();
 
-  chassis.pid_drive_set(24_in,30);
+  chassis.pid_drive_set(23.5_in,60);
   chassis.pid_wait();
 
   chassis.pid_turn_set(-90_deg,90);
@@ -168,15 +164,31 @@ void autonomous() {
   match_load.set(true);
   pros::delay(500);
 
-  chassis.pid_drive_set(30_in,30);
+  chassis.pid_drive_set(29_in,45);
   chassis.pid_wait();
 
-  pros::delay(1000);
+  chassis.pid_drive_set(-1.2_in,45);
+  chassis.pid_wait();
 
-  chassis.pid_drive_set(-45_in,30);
+  chassis.pid_drive_set(1.2_in,45);
+  chassis.pid_wait();
+
+  pros::delay(800);
+
+  chassis.pid_drive_set(-39_in,60);
   chassis.pid_wait();
 
   top_intake.move(-127);
+  pros::delay(5000);
+  top_intake.move(0);
+  bottom_intake.move(0);
+
+  chassis.pid_drive_set(20_in,60);
+  chassis.pid_wait();
+
+  
+  
+
   /*Odometry and Pure Pursuit are not magic
 
   It is possible to get perfectly consistent results without tracking wheels,
@@ -296,45 +308,65 @@ void ez_template_extras() {
  * task, not resume it from where it left off.
  */
 void opcontrol() {
-  /// 1. DRIVE CONTROL
-    // This goes at the top of the loop
-    chassis.opcontrol_arcade_standard(ez::SINGLE); // Standard split arcade 
+  bool intake_running = false;        // R2 toggle
+  bool top_intake_running = false;    // L1 toggle
 
-    // 2. INTAKE / MOTOR CONTROL
-    // Example: Running your intakes with L1 and L2
-    if (master.get_digital(DIGITAL_L1)) {
-      top_intake.move(127);
-      bottom_intake.move(127);
-    } else if (master.get_digital(DIGITAL_L2)) {
-      top_intake.move(-127);
-      bottom_intake.move(-127);
+  while (true) {
+    ez_template_extras();
+    chassis.opcontrol_arcade_standard(ez::SINGLE);
+
+    // R2 toggle
+    if (master.get_digital_new_press(DIGITAL_R2)) {
+      intake_running = !intake_running;
+    }
+
+    // L1 toggle
+    if (master.get_digital_new_press(DIGITAL_L1)) {
+      top_intake_running = !top_intake_running;
+    }
+
+    // X button = FORCE REVERSE (momentary)
+    if (master.get_digital(DIGITAL_X)) {
+      bottom_intake.move(100);   // reverse
+      top_intake.move(100);      // reverse
+      pros::delay(20);
+      continue;                  // skip the rest so nothing overrides it
+    }
+
+    // --- NORMAL LOGIC BELOW ---
+
+    // Bottom intake runs if either toggle is active
+    if (intake_running || top_intake_running) {
+      bottom_intake.move(-200);
     } else {
-      top_intake.move(0);
       bottom_intake.move(0);
     }
 
-    // 3. PNEUMATICS CONTROL
-    // Using the piston you named 'match_load'
-    match_load.button_toggle(master.get_digital(DIGITAL_A));
+    // Top intake runs only when R2 toggle is active
+    if (intake_running) {
+      top_intake.move(-200);
+    } else {
+      top_intake.move(0);
+    }
 
-    // 4. THE DELAY (Very important!)
-    // This prevents the brain from wasting power and crashing
-    pros::delay(ez::util::DELAY_TIME);
+    pros::delay(20);
 
-  while (true) {
-    // Gives you some extras to make EZ-Template ezier
-    ez_template_extras();
+    if (master.get_digital(DIGITAL_A)) {
+      match_load.set(true);
+    } 
+    else if (master.get_digital(DIGITAL_B)) {
+      match_load.set(false);
+    } 
 
-    chassis.opcontrol_tank();  // Tank control
-    // chassis.opcontrol_arcade_standard(ez::SPLIT);   // Standard split arcade
-    // chassis.opcontrol_arcade_standard(ez::SINGLE);  // Standard single arcade
-    // chassis.opcontrol_arcade_flipped(ez::SPLIT);    // Flipped split arcade
-    // chassis.opcontrol_arcade_flipped(ez::SINGLE);   // Flipped single arcade
-
-    // . . .
-    // Put more user control code here!
-    // . . .
-
-    pros::delay(ez::util::DELAY_TIME);  // This is used for timer calculations!  Keep this ez::util::DELAY_TIME
-  }
+    if (master.get_digital(DIGITAL_R1)) {
+      wing.set(true);
+    } 
+    else if (master.get_digital(DIGITAL_L2)) {
+      wing.set(false);}
+    pros::delay(20); 
+  } 
+  
 }
+
+
+
