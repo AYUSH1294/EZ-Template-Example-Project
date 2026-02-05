@@ -1,340 +1,375 @@
 #pragma once
-
 #include "main.h"
 #include "Ez-Template/api.hpp"
 #include "api.h"
+#include "pros/misc.h"
 #include "pros/rtos.hpp"
-
-
-/////
-// For installation, upgrading, documentations, and tutorials, check out our website!
-// https://ez-robotics.github.io/EZ-Template/
-/////
 
 // Chassis constructor
 ez::Drive chassis(
-    // These are your drive motors, the first motor is used for sensing!
-    {-1, -2, 3},     // Left Chassis Ports (negative port will reverse it!)
-    {4, -5, 6},  // Right Chassis Ports (negative port will reverse it!)
-
+    // Left Chassis Ports (negative port will reverse it!)
+    {-1, -2, 3},
+    // Right Chassis Ports (negative port will reverse it!)
+    {4, -5, 6},
     10,      // IMU Port
-    3.25,  // Wheel Diameter (Remember, 4" wheels without screw holes are actually 4.125!)
-    600);   // Wheel RPM = cartridge * (motor gear / wheel gear)
+    3.25,    // Wheel Diameter
+    600);    // Wheel RPM
 
-// Uncomment the trackers you're using here!
-// 1. Tell the compiler the chassis exists elsewhere
-extern Drive chassis;
-
-// 2. Define your motors (using inline so they can be in the header)
+// Define motors
 inline pros::Motor bottom_intake(20);
 inline pros::Motor top_intake(19);
 inline pros::Motor lift(8);
 inline pros::Motor score(18);
 
-// 3. Define your piston
+// Define pistons
 inline ez::Piston match_load('A', false);
+inline ez::Piston wing('B', false);
+
+// Forward declaration
+void default_constants();
+
+// -----------------------------------------
+//        AUTONOMOUS FUNCTIONS
+// -----------------------------------------
+
+// 1. LEFT SIDE AUTON
+void drive_left() {
+  chassis.pid_targets_reset();
+  chassis.drive_imu_reset();
+  chassis.drive_sensor_reset();
+  chassis.odom_xyt_set(0_in, 0_in, 0_deg);
+  chassis.drive_brake_set(MOTOR_BRAKE_HOLD);
+
+  // -- START OF ROUTINE --
+
+  // Step 1: Drive forward to clear the starting zone
+  chassis.pid_drive_set(12_in, 110);
+  chassis.pid_wait();
+
+  // Step 2: Turn towards the center/neutral game objects (Triballs/Discs)
+  chassis.pid_turn_set(90_deg, 90);
+  chassis.pid_wait();
+
+  // Step 3: Start intake to pick up the game object
+  bottom_intake.move(-127);
+
+  // Step 4: Drive forward to intake the object
+  chassis.pid_drive_set(33_in, 45);
+  chassis.pid_wait();
+  pros::delay(500);
+
+  // Step 5: Back up to return to a safe position
+  chassis.pid_drive_set(-30_in, 60);
+  chassis.pid_wait();
+
+  // Step 6: Re-orient towards the match load zone (reset heading)
+  chassis.pid_turn_set(0_deg, 90);
+  chassis.pid_wait();
+
+  // Step 7: Drive towards the match load bar
+  chassis.pid_drive_set(23.5_in, 60);
+  chassis.pid_wait();
+
+  // Step 8: Turn to align parallel with the match load bar for loading
+  chassis.pid_turn_set(-90_deg, 90);
+  chassis.pid_wait();
+
+  // Step 9: Deploy match load mechanism (piston)
+  match_load.set(true);
+  pros::delay(400);
+
+  // Step 10: Drive forward slightly to position for match loading
+  chassis.pid_drive_set(28_in, 100);
+  chassis.pid_wait();
+
+  // Step 11: "Jiggle" movement to help shake objects loose or ensure intake
+  chassis.pid_drive_set(-1.2_in, 60);
+  chassis.pid_wait();
+  chassis.pid_drive_set(1.2_in, 60);
+  chassis.pid_wait();
+  chassis.pid_drive_set(-0.6_in, 60);
+  chassis.pid_wait();
+  pros::delay(100);
+
+  // Step 12: Reverse away from the match load bar towards the goal
+  chassis.pid_drive_set(-37_in, 60);
+  chassis.pid_wait();
+
+  // Step 13: Eject/Score the game objects into the goal
+  bottom_intake.move(100); // Briefly reverse to clear jams or prep
+  pros::delay(10);
+  bottom_intake.move(0);
+  bottom_intake.move(-127); // Intake runs to push objects out
+  top_intake.move(-127);
+  pros::delay(7000); // Long delay to ensure all match loads are scored
+  top_intake.move(0);
+  bottom_intake.move(0);
+
+  // Step 14: STOPS HERE
+  chassis.pid_drive_set(10_in, 60);
+  chassis.pid_wait();
+
+  // Step 15: Retract match load mechanism and execute end-game maneuvering
+  match_load.set(false);
   
-// - `8` and `9` are smart ports (making these negative will reverse the sensor)
-//  - you should get positive values on the encoders going FORWARD and RIGHT
-// - `2.75` is the wheel diameter
-// - `4.0` is the distance from the center of the wheel to the center of the robot
-// ez::tracking_wheel horiz_tracker(8, 2.75, 4.0);  // This tracking wheel is perpendicular to the drive wheels
-// ez::tracking_wheel vert_tracker(9, 2.75, 4.0);   // This tracking wheel is parallel to the drive wheels
+  // Turn around to face the opposite direction
+  chassis.pid_turn_set(180_deg, 90);
+  
+  // Drive across the field (perhaps to touch the elevation bar or clear zone)
+  chassis.pid_drive_set(20_in, 360);
+  
+  // Final turns and drive to park or final position
+  chassis.pid_turn_set(-90_deg, 90);
+  chassis.pid_drive_set(10_in, 60);
+  chassis.pid_turn_set(180_deg, 90);
+  chassis.pid_drive_set(50_in, 200);
+}
 
-/**
- * Runs initialization code. This occurs as soon as the program is started.
- *
- * All other competition modes are blocked by initialize; it is recommended
- * to keep execution time for this mode under a few seconds.
- */
+// 2. RIGHT SIDE AUTON (Mirrored)
+void drive_right() {
+  chassis.pid_targets_reset();
+  chassis.drive_imu_reset();
+  chassis.drive_sensor_reset();
+  chassis.odom_xyt_set(0_in, 0_in, 0_deg);
+  chassis.drive_brake_set(MOTOR_BRAKE_HOLD);
+
+  // -- START OF ROUTINE --
+
+  // Step 1: Drive forward to clear the starting zone
+  chassis.pid_drive_set(12_in, 110);
+  chassis.pid_wait();
+
+  // Step 2: Turn towards center/neutral game objects (Mirrored: Left turn instead of Right)
+  chassis.pid_turn_set(-90_deg, 90); 
+  chassis.pid_wait();
+
+  // Step 3: Start intake to pick up the game object
+  bottom_intake.move(-127);
+
+  // Step 4: Drive forward to intake the object
+  chassis.pid_drive_set(33_in, 45);
+  chassis.pid_wait();
+  pros::delay(500);
+
+  // Step 5: Back up to return to a safe position
+  chassis.pid_drive_set(-30_in, 60);
+  chassis.pid_wait();
+
+  // Step 6: Re-orient towards the match load zone (0 degrees is straight relative to start)
+  chassis.pid_turn_set(0_deg, 90);
+  chassis.pid_wait();
+
+  // Step 7: Drive towards the match load bar
+  chassis.pid_drive_set(23.5_in, 60);
+  chassis.pid_wait();
+
+  // Step 8: Turn to align parallel with match load bar (Mirrored: Right turn instead of Left)
+  chassis.pid_turn_set(90_deg, 90); 
+  chassis.pid_wait();
+
+  // Step 9: Deploy match load mechanism (piston)
+  match_load.set(true);
+  pros::delay(400);
+
+  // Step 10: Drive forward slightly to position for match loading
+  chassis.pid_drive_set(28_in, 100);
+  chassis.pid_wait();
+
+  // Step 11: "Jiggle" movement to help shake objects loose or ensure intake
+  chassis.pid_drive_set(-1.2_in, 60);
+  chassis.pid_wait();
+  chassis.pid_drive_set(1.2_in, 60);
+  chassis.pid_wait();
+  chassis.pid_drive_set(-0.6_in, 60);
+  chassis.pid_wait();
+  pros::delay(100);
+
+  // Step 12: Reverse away from the match load bar towards the goal
+  chassis.pid_drive_set(-37_in, 60);
+  chassis.pid_wait();
+
+  // Step 13: Eject/Score the game objects into the goal
+  bottom_intake.move(100); // Briefly reverse
+  pros::delay(10);
+  bottom_intake.move(0);
+  bottom_intake.move(-127); // Intake runs to push objects out
+  top_intake.move(-127);
+  pros::delay(7000); // Long delay to ensure all match loads are scored
+  top_intake.move(0);
+  bottom_intake.move(0);
+
+  // Step 14: Drive forward slightly away from the goal
+  chassis.pid_drive_set(10_in, 60); 
+  chassis.pid_wait();
+
+  // Step 15: Retract match load mechanism and execute end-game maneuvering
+  match_load.set(false);
+  
+  // Turn around to face opposite direction (Mirrored: -180 instead of 180)
+  chassis.pid_turn_set(-180_deg, 90); 
+  
+  // Drive across the field (perhaps to touch the elevation bar or clear zone)
+  chassis.pid_drive_set(20_in, 360); 
+  
+  // Final turns and drive to park or final position (Mirrored turns)
+  chassis.pid_turn_set(90_deg, 90);   
+  chassis.pid_drive_set(10_in, 60);
+  chassis.pid_turn_set(-180_deg, 90); 
+  chassis.pid_drive_set(50_in, 200);
+}
+
+// 3. DO NOTHING
+void drive_nothing() {
+  // Do nothing
+}
+
+// -----------------------------------------
+//           INITIALIZE
+// -----------------------------------------
+
 void initialize() {
-  // Print our branding over your terminal :D
   ez::ez_template_print();
-  default_constants();
-  pros::delay(500);  // Stop the user from doing anything while legacy ports configure
+  pros::delay(500);
 
-  // Look at your horizontal tracking wheel and decide if it's in front of the midline of your robot or behind it
-  //  - change `back` to `front` if the tracking wheel is in front of the midline
-  //  - ignore this if you aren't using a horizontal tracker
-  // chassis.odom_tracker_back_set(&horiz_tracker);
-  // Look at your vertical tracking wheel and decide if it's to the left or right of the center of the robot
-  //  - change `left` to `right` if the tracking wheel is to the right of the centerline
-  //  - ignore this if you aren't using a vertical tracker
-  // chassis.odom_tracker_left_set(&vert_tracker);
+  chassis.opcontrol_curve_buttons_toggle(true);
+  chassis.opcontrol_drive_activebrake_set(0.0);
+  chassis.opcontrol_curve_default_set(0.0, 0.0);
 
-  // Configure your chassis controls
-  chassis.opcontrol_curve_buttons_toggle(true);   // Enables modifying the controller curve with buttons on the joysticks
-  chassis.opcontrol_drive_activebrake_set(0.0);   // Sets the active brake kP. We recommend ~2.  0 will disable.
-  chassis.opcontrol_curve_default_set(0.0, 0.0);  // Defaults for curve. If using tank, only the first parameter is used. (Comment this line out if you have an SD card!)
-
-  // Set the drive to your own constants from autons.cpp!
   default_constants();
 
-  // These are already defaulted to these buttons, but you can change the left/right curve buttons here!
-  // chassis.opcontrol_curve_buttons_left_set(pros::E_CONTROLLER_DIGITAL_LEFT, pros::E_CONTROLLER_DIGITAL_RIGHT);  // If using tank, only the left side is used.
-  // chassis.opcontrol_curve_buttons_right_set(pros::E_CONTROLLER_DIGITAL_Y, pros::E_CONTROLLER_DIGITAL_A);
-
-  // Autonomous Selector using LLEMU
   ez::as::auton_selector.autons_add({
-      {"Drive\n\nDrive forward and come back", drive_example},
-      {"Turn\n\nTurn 3 times.", turn_example},
-      {"Drive and Turn\n\nDrive forward, turn, come back", drive_and_turn},
-      {"Drive and Turn\n\nSlow down during drive", wait_until_change_speed},
-      {"Swing Turn\n\nSwing in an 'S' curve", swing_example},
-      {"Motion Chaining\n\nDrive forward, turn, and come back, but blend everything together :D", motion_chaining},
-      {"Combine all 3 movements", combining_movements},
-      {"Interference\n\nAfter driving forward, robot performs differently if interfered or not", interfered_example},
-      {"Simple Odom\n\nThis is the same as the drive example, but it uses odom instead!", odom_drive_example},
-      {"Pure Pursuit\n\nGo to (0, 30) and pass through (6, 10) on the way.  Come back to (0, 0)", odom_pure_pursuit_example},
-      {"Pure Pursuit Wait Until\n\nGo to (24, 24) but start running an intake once the robot passes (12, 24)", odom_pure_pursuit_wait_until_example},
-      {"Boomerang\n\nGo to (0, 24, 45) then come back to (0, 0, 0)", odom_boomerang_example},
-      {"Boomerang Pure Pursuit\n\nGo to (0, 24, 45) on the way to (24, 24) then come back to (0, 0, 0)", odom_boomerang_injected_pure_pursuit_example},
-      {"Measure Offsets\n\nThis will turn the robot a bunch of times and calculate your offsets for your tracking wheels.", measure_offsets},
+      ez::Auton("Left Side Auton", drive_left),
+      ez::Auton("Right Side Auton", drive_right),
+      ez::Auton("Do Nothing", drive_nothing),
   });
 
-  // Initialize chassis and auton selector
   chassis.initialize();
   ez::as::initialize();
   master.rumble(chassis.drive_imu_calibrated() ? "." : "---");
 }
 
-/**
- * Runs while the robot is in the disabled state of Field Management System or
- * the VEX Competition Switch, following either autonomous or opcontrol. When
- * the robot is enabled, this task will exit.
- */
-void disabled() {
-  // . . .
-}
+void disabled() {}
+void competition_initialize() {}
 
-/**
- * Runs after initialize(), and before autonomous when connected to the Field
- * Management System or the VEX Competition Switch. This is intended for
- * competition-specific initialization routines, such as an autonomous selector
- * on the LCD.
- *
- * This task will exit when the robot is enabled and autonomous or opcontrol
- * starts.
- */
-void competition_initialize() {
-  // . . .
-}
+// -----------------------------------------
+//           AUTONOMOUS TASK
+// -----------------------------------------
 
-/**
- * Runs the user autonomous code. This function will be started in its own task
- * with the default priority and stack size whenever the robot is enabled via
- * the Field Management System or the VEX Competition Switch in the autonomous
- * mode. Alternatively, this function may be called in initialize or opcontrol
- * for non-competition testing purposes.
- *
- * If the robot is disabled or communications is lost, the autonomous task
- * will be stopped. Re-enabling the robot will restart the task, not re-start it
- * from where it left off.
- */
 void autonomous() {
-  chassis.pid_targets_reset();                // Resets PID targets to 0
-  chassis.drive_imu_reset();                  // Reset gyro position to 0
-  chassis.drive_sensor_reset();               // Reset drive sensors to 0
-  chassis.odom_xyt_set(0_in, 0_in, 0_deg);    // Set the current position, you can start at a specific position with this
-  chassis.drive_brake_set(MOTOR_BRAKE_HOLD);  
-  
-  // Set motors to hold.  This helps autonomous consistency
+  chassis.pid_targets_reset();
+  chassis.drive_imu_reset();
+  chassis.drive_sensor_reset();
+  chassis.odom_xyt_set(0_in, 0_in, 0_deg);
+  chassis.drive_brake_set(MOTOR_BRAKE_HOLD);
 
-
-  chassis.pid_drive_set(10_in,110);
-  chassis.pid_wait();
-
-  chassis.pid_turn_set(90_deg,90);
-  chassis.pid_wait();
-
-  bottom_intake.move(-127);
-
-  chassis.pid_drive_set(35_in,30);
-  chassis.pid_wait();
-  pros::delay(500);
-
-  chassis.pid_drive_set(-30_in,30);
-  chassis.pid_wait();
-
-  chassis.pid_turn_set(0_deg,90);
-  chassis.pid_wait();
-
-  chassis.pid_drive_set(24_in,30);
-  chassis.pid_wait();
-
-  chassis.pid_turn_set(-90_deg,90);
-  chassis.pid_wait();
-
-  match_load.set(true);
-  pros::delay(500);
-
-  chassis.pid_drive_set(30_in,30);
-  chassis.pid_wait();
-
-  pros::delay(1000);
-
-  chassis.pid_drive_set(-45_in,30);
-  chassis.pid_wait();
-
-  top_intake.move(-127);
-  /*Odometry and Pure Pursuit are not magic
-
-  It is possible to get perfectly consistent results without tracking wheels,
-  but it is also possible to have extremely inconsistent results without tracking wheels.
-  When you don't use tracking wheels, you need to:
-   - avoid wheel slip
-   - avoid wheelies
-   - avoid throwing momentum around (super harsh turns, like in the example below)
-  You can do cool curved motions, but you have to give your robot the best chance
-  to be consistent
-  */
-
-   // Calls selected auton from autonomous selector
+  // CORRECTED LINE:
+  ez::as::auton_selector.selected_auton_call();
 }
 
-/**
- * Simplifies printing tracker values to the brain screen
- */
+// -----------------------------------------
+//           SCREEN TASKS
+// -----------------------------------------
+
 void screen_print_tracker(ez::tracking_wheel *tracker, std::string name, int line) {
   std::string tracker_value = "", tracker_width = "";
-  // Check if the tracker exists
   if (tracker != nullptr) {
-    tracker_value = name + " tracker: " + util::to_string_with_precision(tracker->get());             // Make text for the tracker value
-    tracker_width = "  width: " + util::to_string_with_precision(tracker->distance_to_center_get());  // Make text for the distance to center
+    tracker_value = name + " tracker: " + util::to_string_with_precision(tracker->get());
+    tracker_width = "  width: " + util::to_string_with_precision(tracker->distance_to_center_get());
   }
-  ez::screen_print(tracker_value + tracker_width, line);  // Print final tracker text
+  ez::screen_print(tracker_value + tracker_width, line);
 }
 
-/**
- * Ez screen task
- * Adding new pages here will let you view them during user control or autonomous
- * and will help you debug problems you're having
- */
 void ez_screen_task() {
   while (true) {
-    // Only run this when not connected to a competition switch
     if (!pros::competition::is_connected()) {
-      // Blank page for odom debugging
       if (chassis.odom_enabled() && !chassis.pid_tuner_enabled()) {
-        // If we're on the first blank page...
         if (ez::as::page_blank_is_on(0)) {
-          // Display X, Y, and Theta
           ez::screen_print("x: " + util::to_string_with_precision(chassis.odom_x_get()) +
                                "\ny: " + util::to_string_with_precision(chassis.odom_y_get()) +
                                "\na: " + util::to_string_with_precision(chassis.odom_theta_get()),
-                           1);  // Don't override the top Page line
-
-          // Display all trackers that are being used
+                           1);
           screen_print_tracker(chassis.odom_tracker_left, "l", 4);
           screen_print_tracker(chassis.odom_tracker_right, "r", 5);
           screen_print_tracker(chassis.odom_tracker_back, "b", 6);
           screen_print_tracker(chassis.odom_tracker_front, "f", 7);
         }
       }
-    }
-
-    // Remove all blank pages when connected to a comp switch
-    else {
+    } else {
       if (ez::as::page_blank_amount() > 0)
         ez::as::page_blank_remove_all();
     }
-
     pros::delay(ez::util::DELAY_TIME);
   }
 }
 pros::Task ezScreenTask(ez_screen_task);
 
-/**
- * Gives you some extras to run in your opcontrol:
- * - run your autonomous routine in opcontrol by pressing DOWN and B
- *   - to prevent this from accidentally happening at a competition, this
- *     is only enabled when you're not connected to competition control.
- * - gives you a GUI to change your PID values live by pressing X
- */
-void ez_template_extras() {
-  // Only run this when not connected to a competition switch
-  if (!pros::competition::is_connected()) {
-    // PID Tuner
-    // - after you find values that you're happy with, you'll have to set them in auton.cpp
+// -----------------------------------------
+//           OPCONTROL
+// -----------------------------------------
 
-    // Enable / Disable PID Tuner
-    //  When enabled:
-    //  * use A and Y to increment / decrement the constants
-    //  * use the arrow keys to navigate the constants
+void ez_template_extras() {
+  if (!pros::competition::is_connected()) {
     if (master.get_digital_new_press(DIGITAL_X))
       chassis.pid_tuner_toggle();
-
-    // Trigger the selected autonomous routine
     if (master.get_digital(DIGITAL_B) && master.get_digital(DIGITAL_DOWN)) {
       pros::motor_brake_mode_e_t preference = chassis.drive_brake_get();
       autonomous();
       chassis.drive_brake_set(preference);
     }
-
-    // Allow PID Tuner to iterate
     chassis.pid_tuner_iterate();
-  }
-
-  // Disable PID Tuner when connected to a comp switch
-  else {
+  } else {
     if (chassis.pid_tuner_enabled())
       chassis.pid_tuner_disable();
   }
 }
 
-/**
- * Runs the operator control code. This function will be started in its own task
- * with the default priority and stack size whenever the robot is enabled via
- * the Field Management System or the VEX Competition Switch in the operator
- * control mode.
- *
- * If no competition control is connected, this function will run immediately
- * following initialize().
- *
- * If the robot is disabled or communications is lost, the
- * operator control task will be stopped. Re-enabling the robot will restart the
- * task, not resume it from where it left off.
- */
 void opcontrol() {
-  /// 1. DRIVE CONTROL
-    // This goes at the top of the loop
-    chassis.opcontrol_arcade_standard(ez::SINGLE); // Standard split arcade 
+  bool intake_running = false;
+  bool top_intake_running = false;
 
-    // 2. INTAKE / MOTOR CONTROL
-    // Example: Running your intakes with L1 and L2
-    if (master.get_digital(DIGITAL_L1)) {
-      top_intake.move(127);
-      bottom_intake.move(127);
-    } else if (master.get_digital(DIGITAL_L2)) {
-      top_intake.move(-127);
-      bottom_intake.move(-127);
+  while (true) {
+    ez_template_extras();
+    chassis.opcontrol_arcade_standard(ez::SINGLE);
+
+    if (master.get_digital_new_press(DIGITAL_R2)) {
+      intake_running = !intake_running;
+    }
+    if (master.get_digital_new_press(DIGITAL_L1)) {
+      top_intake_running = !top_intake_running;
+    }
+
+    if (master.get_digital(DIGITAL_X)) {
+      bottom_intake.move(100);
+      top_intake.move(100);
+      pros::delay(20);
+      continue;
+    }
+
+    if (intake_running || top_intake_running) {
+      bottom_intake.move(-200);
     } else {
-      top_intake.move(0);
       bottom_intake.move(0);
     }
 
-    // 3. PNEUMATICS CONTROL
-    // Using the piston you named 'match_load'
-    match_load.button_toggle(master.get_digital(DIGITAL_A));
+    if (intake_running) {
+      top_intake.move(-200);
+    } else {
+      top_intake.move(0);
+    }
 
-    // 4. THE DELAY (Very important!)
-    // This prevents the brain from wasting power and crashing
-    pros::delay(ez::util::DELAY_TIME);
+    pros::delay(20);
 
-  while (true) {
-    // Gives you some extras to make EZ-Template ezier
-    ez_template_extras();
+    if (master.get_digital(DIGITAL_A)) {
+      match_load.set(true);
+    } else if (master.get_digital(DIGITAL_B)) {
+      match_load.set(false);
+    }
 
-    chassis.opcontrol_tank();  // Tank control
-    // chassis.opcontrol_arcade_standard(ez::SPLIT);   // Standard split arcade
-    // chassis.opcontrol_arcade_standard(ez::SINGLE);  // Standard single arcade
-    // chassis.opcontrol_arcade_flipped(ez::SPLIT);    // Flipped split arcade
-    // chassis.opcontrol_arcade_flipped(ez::SINGLE);   // Flipped single arcade
-
-    // . . .
-    // Put more user control code here!
-    // . . .
-
-    pros::delay(ez::util::DELAY_TIME);  // This is used for timer calculations!  Keep this ez::util::DELAY_TIME
+    if (master.get_digital(DIGITAL_R1)) {
+      wing.set(true);
+    } else if (master.get_digital(DIGITAL_L2)) {
+      wing.set(false);
+    }
+    pros::delay(20);
   }
 }
