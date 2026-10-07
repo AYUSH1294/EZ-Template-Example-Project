@@ -8,7 +8,7 @@
 // Chassis constructor
 ez::Drive chassis(
     // Left Chassis Ports (negative port will reverse it!)
-    {-1, -2, 3},
+    {-1, 2, -3},
     // Right Chassis Ports (negative port will reverse it!)
     {4, -5, 6},
     10,      // IMU Port
