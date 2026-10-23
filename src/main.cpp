@@ -16,10 +16,12 @@ ez::Drive chassis(
     600);    // Wheel RPM
 
 // Define motors
-inline pros::Motor bottom_intake(20);
+inline pros::Motor bottom_intake(-20);
 inline pros::Motor top_intake(19);
-inline pros::Motor lift(8);
+inline pros::Motor lift(9);
 inline pros::Motor score(18);
+
+
 
 // Define pistons
 inline ez::Piston match_load('A', false);
@@ -28,289 +30,146 @@ inline ez::Piston wing('B', false);
 // Forward declaration
 void default_constants();
 
+// =====================================================================
+//  PINNACLE (RECF Achieve 2026-27) AUTONS
+//
+//  ALL DISTANCES / ANGLES ARE STARTING GUESSES - tune on the real field.
+//  Positive turn = right (clockwise). Red = +1, Blue = -1 mirrors turns.
+//  Frame assumed: robot starts touching its alliance loader, facing into
+//  the field, holding the yellow/red preload pin.
+// =====================================================================
+
+// ---------- tuning constants (inches / degrees / ms) ----------
+namespace AU {
+  // preload
+  constexpr double PRELOAD_DRIVE = 18;   // loader -> alliance goal
+  constexpr double PRELOAD_TURN  = 45;
+  // roller in our zone
+  constexpr double ROLLER_TURN   = 90;
+  constexpr double ROLLER_DRIVE  = 20;
+  // neutral goal run (stay on OUR side of neutral zone in auton!)
+  constexpr double NEUTRAL_TURN  = 0;
+  constexpr double NEUTRAL_DRIVE = 36;
+  // timing
+  constexpr uint32_t AUTON_MS  = 15000;  // alliance match auton
+  constexpr uint32_t SKILLS_MS = 60000;  // solo coding match
+}
+
+// ---------- time guard so we never run past the period ----------
+static uint32_t auton_start = 0;
+static bool time_ok(uint32_t need_ms, uint32_t limit_ms) {
+  return (pros::millis() - auton_start) + need_ms < limit_ms;
+}
+
+// ---------- subsystem helpers: FILL IN FOR THE NEW ROBOT ----------
+void intake_in()   { bottom_intake.move(-127); top_intake.move(-127); }
+void intake_out()  { bottom_intake.move(127);  top_intake.move(127);  }
+void intake_stop() { bottom_intake.move(0);    top_intake.move(0);    }
+
+// Place held pin on goal in front of us, ALLIANCE COLOR UP (visible).
+void place_pin() { intake_out(); pros::delay(400); intake_stop(); }
+
+// Nest a cup onto a scored pin (1 pt each).
+void place_cup() { intake_out(); pros::delay(300); intake_stop(); }
+
+// Rotate the 3-sided roller so OUR color faces the field (0-2 flips).
+void roller_to_alliance(int flips) {
+  for (int i = 0; i < flips; i++) {
+    score.move(127);   // TODO: your roller-turning mechanism
+    pros::delay(350);
+    score.move(0);
+    pros::delay(100);
+  }
+}
+
+static void auton_reset() {
+  chassis.pid_targets_reset();
+  chassis.drive_imu_reset();
+  chassis.drive_sensor_reset();
+  chassis.odom_xyt_set(0_in, 0_in, 0_deg);
+  chassis.drive_brake_set(MOTOR_BRAKE_HOLD);
+  auton_start = pros::millis();
+}
+
 // -----------------------------------------
-//        AUTONOMOUS FUNCTIONS
+//  ALLIANCE AUTON (15 s)
+//  Goal: Auton Ranking Point = >=3 cups AND >=4 halfpins across >=2 goals
+//  AND our zone's roller showing our color. Never touch the opponent's side
+//  of the neutral zone or their alliance goals (any foul forfeits the RP).
 // -----------------------------------------
+static void pinnacle_alliance(bool red) {
+  const int s = red ? 1 : -1;
+  auton_reset();
 
-// 1. LEFT SIDE AUTON
-void drive_left() {
-  chassis.pid_targets_reset();
-  chassis.drive_imu_reset();
-  chassis.drive_sensor_reset();
-  chassis.odom_xyt_set(0_in, 0_in, 0_deg);
-  chassis.drive_brake_set(MOTOR_BRAKE_HOLD);
+  // 1) Score preload (yellow/red pin) on our alliance goal
+  chassis.pid_drive_set(AU::PRELOAD_DRIVE * 1_in, 110);
+  chassis.pid_wait();
+  chassis.pid_turn_set(s * AU::PRELOAD_TURN * 1_deg, 90);
+  chassis.pid_wait();
+  place_pin();
 
-  // -- START OF ROUTINE --
-
-  // Step 1: Drive forward to clear the starting zone
-  chassis.pid_drive_set(12_in, 110);
+  // 2) Turn our zone's roller to our color
+  chassis.pid_turn_set(s * AU::ROLLER_TURN * 1_deg, 90);
+  chassis.pid_wait();
+  chassis.pid_drive_set(AU::ROLLER_DRIVE * 1_in, 90);
+  chassis.pid_wait();
+  roller_to_alliance(1);
+  chassis.pid_drive_set(-6_in, 90);
   chassis.pid_wait();
 
-  // Step 2: Turn towards the center/neutral game objects (Triballs/Discs)
-  chassis.pid_turn_set(90_deg, 90);
-  chassis.pid_wait();
+  // 3) Collect pins/cups (drive team may also feed the loader during auton)
+  if (time_ok(5000, AU::AUTON_MS)) {
+    intake_in();
+    chassis.pid_turn_set(s * AU::NEUTRAL_TURN * 1_deg, 90);
+    chassis.pid_wait();
+    chassis.pid_drive_set(AU::NEUTRAL_DRIVE * 1_in, 70);
+    chassis.pid_wait();
+    pros::delay(300);
+    intake_stop();
+  }
 
-  // Step 3: Start intake to pick up the game object
-  bottom_intake.move(-127);
+  // 4) Score on a SECOND goal (neutral goal on our side)
+  if (time_ok(3000, AU::AUTON_MS)) {
+    place_pin();
+    place_cup();
+  }
 
-  // Step 4: Drive forward to intake the object
-  chassis.pid_drive_set(33_in, 45);
-  chassis.pid_wait();
-  pros::delay(500);
-
-  // Step 5: Back up to return to a safe position
-  chassis.pid_drive_set(-30_in, 60);
-  chassis.pid_wait();
-
-  // Step 6: Re-orient towards the match load zone (reset heading)
-  chassis.pid_turn_set(0_deg, 90);
-  chassis.pid_wait();
-
-  // Step 7: Drive towards the match load bar
-  chassis.pid_drive_set(23.5_in, 60);
-  chassis.pid_wait();
-
-  // Step 8: Turn to align parallel with the match load bar for loading
-  chassis.pid_turn_set(-90_deg, 90);
-  chassis.pid_wait();
-
-  // Step 9: Deploy match load mechanism (piston)
-  match_load.set(true);
-  pros::delay(400);
-
-  // Step 10: Drive forward slightly to position for match loading
-  chassis.pid_drive_set(28_in, 100);
-  chassis.pid_wait();
-
-  // Step 11: "Jiggle" movement to help shake objects loose or ensure intake
-  chassis.pid_drive_set(-1.2_in, 60);
-  chassis.pid_wait();
-  chassis.pid_drive_set(1.2_in, 60);
-  chassis.pid_wait();
-  chassis.pid_drive_set(-0.6_in, 60);
-  chassis.pid_wait();
-  pros::delay(100);
-
-  // Step 12: Reverse away from the match load bar towards the goal
-  chassis.pid_drive_set(-37_in, 60);
-  chassis.pid_wait();
-
-  // Step 13: Eject/Score the game objects into the goal
-  bottom_intake.move(100); // Briefly reverse to clear jams or prep
-  pros::delay(10);
-  bottom_intake.move(0);
-  bottom_intake.move(-127); // Intake runs to push objects out
-  top_intake.move(-127);
-  pros::delay(7000); // Long delay to ensure all match loads are scored
-  top_intake.move(0);
-  bottom_intake.move(0);
-
-  // Step 14: STOPS HERE
-  chassis.pid_drive_set(10_in, 60);
-  chassis.pid_wait();
-
-  // Step 15: Retract match load mechanism and execute end-game maneuvering
-  match_load.set(false);
-  
-  // Turn around to face the opposite direction
-  chassis.pid_turn_set(180_deg, 90);
-  
-  // Drive across the field (perhaps to touch the elevation bar or clear zone)
-  chassis.pid_drive_set(20_in, 360);
-  
-  // Final turns and drive to park or final position
-  chassis.pid_turn_set(-90_deg, 90);
-  chassis.pid_drive_set(10_in, 60);
-  chassis.pid_turn_set(180_deg, 90);
-  chassis.pid_drive_set(50_in, 200);
+  // 5) Return toward our loader
+  if (time_ok(2000, AU::AUTON_MS)) {
+    chassis.pid_drive_set(-AU::NEUTRAL_DRIVE * 1_in, 110);
+    chassis.pid_wait();
+  }
 }
 
-// 2. RIGHT SIDE AUTON (Mirrored)
-void drive_right() {
-  chassis.pid_targets_reset();
-  chassis.drive_imu_reset();
-  chassis.drive_sensor_reset();
-  chassis.odom_xyt_set(0_in, 0_in, 0_deg);
-  chassis.drive_brake_set(MOTOR_BRAKE_HOLD);
+// -----------------------------------------
+//  SOLO CODING MATCH (60 s, no driver input)
+// -----------------------------------------
+static void pinnacle_skills() {
+  pinnacle_alliance(true);
+  auton_start = pros::millis() - 15000;  // opener already used ~15 s
 
-  // -- START OF ROUTINE --
+  for (int cycle = 0; cycle < 3; cycle++) {
+    if (!time_ok(12000, AU::SKILLS_MS)) break;
+    intake_in();
+    chassis.pid_drive_set(-24_in, 110);
+    chassis.pid_wait();
+    pros::delay(600);   // time for drive team to feed the loader
+    chassis.pid_drive_set(24_in, 110);
+    chassis.pid_wait();
+    place_pin();
+  }
 
-  // Step 1: Drive forward to clear the starting zone
-  chassis.pid_drive_set(12_in, 110);
+  // Finish touching our loader
+  chassis.pid_drive_set(-18_in, 110);
   chassis.pid_wait();
-
-  // Step 2: Turn towards center/neutral game objects (Mirrored: Left turn instead of Right)
-  chassis.pid_turn_set(-90_deg, 90); 
-  chassis.pid_wait();
-
-  // Step 3: Start intake to pick up the game object
-  bottom_intake.move(-127);
-
-  // Step 4: Drive forward to intake the object
-  chassis.pid_drive_set(33_in, 45);
-  chassis.pid_wait();
-  pros::delay(500);
-
-  // Step 5: Back up to return to a safe position
-  chassis.pid_drive_set(-30_in, 60);
-  chassis.pid_wait();
-
-  // Step 6: Re-orient towards the match load zone (0 degrees is straight relative to start)
-  chassis.pid_turn_set(0_deg, 90);
-  chassis.pid_wait();
-
-  // Step 7: Drive towards the match load bar
-  chassis.pid_drive_set(23.5_in, 60);
-  chassis.pid_wait();
-
-  // Step 8: Turn to align parallel with match load bar (Mirrored: Right turn instead of Left)
-  chassis.pid_turn_set(90_deg, 90); 
-  chassis.pid_wait();
-
-  // Step 9: Deploy match load mechanism (piston)
-  match_load.set(true);
-  pros::delay(400);
-
-  // Step 10: Drive forward slightly to position for match loading
-  chassis.pid_drive_set(28_in, 100);
-  chassis.pid_wait();
-
-  // Step 11: "Jiggle" movement to help shake objects loose or ensure intake
-  chassis.pid_drive_set(-1.2_in, 60);
-  chassis.pid_wait();
-  chassis.pid_drive_set(1.2_in, 60);
-  chassis.pid_wait();
-  chassis.pid_drive_set(-0.6_in, 60);
-  chassis.pid_wait();
-  pros::delay(100);
-
-  // Step 12: Reverse away from the match load bar towards the goal
-  chassis.pid_drive_set(-37_in, 60);
-  chassis.pid_wait();
-
-  // Step 13: Eject/Score the game objects into the goal
-  bottom_intake.move(100); // Briefly reverse
-  pros::delay(10);
-  bottom_intake.move(0);
-  bottom_intake.move(-127); // Intake runs to push objects out
-  top_intake.move(-127);
-  pros::delay(7000); // Long delay to ensure all match loads are scored
-  top_intake.move(0);
-  bottom_intake.move(0);
-
-  // Step 14: Drive forward slightly away from the goal
-  chassis.pid_drive_set(10_in, 60); 
-  chassis.pid_wait();
-
-  // Step 15: Retract match load mechanism and execute end-game maneuvering
-  match_load.set(false);
-  
-  // Turn around to face opposite direction (Mirrored: -180 instead of 180)
-  chassis.pid_turn_set(-180_deg, 90); 
-  
-  // Drive across the field (perhaps to touch the elevation bar or clear zone)
-  chassis.pid_drive_set(20_in, 360); 
-  
-  // Final turns and drive to park or final position (Mirrored turns)
-  chassis.pid_turn_set(90_deg, 90);   
-  chassis.pid_drive_set(10_in, 60);
-  chassis.pid_turn_set(-180_deg, 90); 
-  chassis.pid_drive_set(50_in, 200);
 }
 
-// 3. SKILLS AUTON (Currently copy of Left)
-void drive_skills() {
-  chassis.pid_targets_reset();
-  chassis.drive_imu_reset();
-  chassis.drive_sensor_reset();
-  chassis.odom_xyt_set(0_in, 0_in, 0_deg);
-  chassis.drive_brake_set(MOTOR_BRAKE_HOLD);
-
-  // -- START OF ROUTINE --
-
-  // Step 1: Drive forward to clear the starting zone
-  chassis.pid_drive_set(12_in, 110);
-  chassis.pid_wait();
-
-  // Step 2: Turn towards the center/neutral game objects (Triballs/Discs)
-  chassis.pid_turn_set(90_deg, 90);
-  chassis.pid_wait();
-
-  // Step 3: Start intake to pick up the game object
-  bottom_intake.move(-127);
-
-  // Step 4: Drive forward to intake the object
-  chassis.pid_drive_set(33_in, 45);
-  chassis.pid_wait();
-  pros::delay(500);
-
-  // Step 5: Back up to return to a safe position
-  chassis.pid_drive_set(-30_in, 60);
-  chassis.pid_wait();
-
-  // Step 6: Re-orient towards the match load zone (reset heading)
-  chassis.pid_turn_set(0_deg, 90);
-  chassis.pid_wait();
-
-  // Step 7: Drive towards the match load bar
-  chassis.pid_drive_set(23.5_in, 60);
-  chassis.pid_wait();
-
-  // Step 8: Turn to align parallel with the match load bar for loading
-  chassis.pid_turn_set(-90_deg, 90);
-  chassis.pid_wait();
-
-  // Step 9: Deploy match load mechanism (piston)
-  match_load.set(true);
-  pros::delay(400);
-
-  // Step 10: Drive forward slightly to position for match loading
-  chassis.pid_drive_set(28_in, 100);
-  chassis.pid_wait();
-
-  // Step 11: "Jiggle" movement to help shake objects loose or ensure intake
-  chassis.pid_drive_set(-1.2_in, 60);
-  chassis.pid_wait();
-  chassis.pid_drive_set(1.2_in, 60);
-  chassis.pid_wait();
-  chassis.pid_drive_set(-0.6_in, 60);
-  chassis.pid_wait();
-  pros::delay(100);
-
-  // Step 12: Reverse away from the match load bar towards the goal
-  chassis.pid_drive_set(-37_in, 60);
-  chassis.pid_wait();
-
-  // Step 13: Eject/Score the game objects into the goal
-  bottom_intake.move(100); // Briefly reverse to clear jams or prep
-  pros::delay(10);
-  bottom_intake.move(0);
-  bottom_intake.move(-127); // Intake runs to push objects out
-  top_intake.move(-127);
-  pros::delay(7000); // Long delay to ensure all match loads are scored
-  top_intake.move(0);
-  bottom_intake.move(0);
-
-  // Step 14: STOPS HERE
-  chassis.pid_drive_set(10_in, 60);
-  chassis.pid_wait();
-
-  // Step 15: Retract match load mechanism and execute end-game maneuvering
-  match_load.set(false);
-  
-  // Turn around to face the opposite direction
-  chassis.pid_turn_set(180_deg, 90);
-  
-  // Drive across the field (perhaps to touch the elevation bar or clear zone)
-  chassis.pid_drive_set(20_in, 360);
-  
-  // Final turns and drive to park or final position
-  chassis.pid_turn_set(-90_deg, 90);
-  chassis.pid_drive_set(10_in, 60);
-  chassis.pid_turn_set(180_deg, 90);
-  chassis.pid_drive_set(50_in, 200);
-}
-
+// 1. RED ALLIANCE
+void drive_left()   { pinnacle_alliance(true); }
+// 2. BLUE ALLIANCE (mirrored)
+void drive_right()  { pinnacle_alliance(false); }
+// 3. SOLO CODING / SKILLS
+void drive_skills() { pinnacle_skills(); }
 // 4. DO NOTHING
 void drive_nothing() {
   // Do nothing
@@ -331,9 +190,9 @@ void initialize() {
   default_constants();
 
   ez::as::auton_selector.autons_add({
-      ez::Auton("Left Side Auton", drive_left),
-      ez::Auton("Right Side Auton", drive_right),
-      ez::Auton("Skills Auton", drive_skills),
+      ez::Auton("Red Alliance Auton", drive_left),
+      ez::Auton("Blue Alliance Auton", drive_right),
+      ez::Auton("Solo Coding / Skills", drive_skills),
       ez::Auton("Do Nothing", drive_nothing),
   });
 
@@ -423,6 +282,16 @@ void opcontrol() {
   while (true) {
     ez_template_extras();
     chassis.opcontrol_arcade_standard(ez::SINGLE);
+
+    if (master.get_digital_new_press(DIGITAL_UP)) {
+      lift.set_voltage_limit(12000);
+      lift.move_relative(20.0 * 360.0, 100);
+    }
+
+    if (master.get_digital_new_press(DIGITAL_LEFT)) {
+      lift.set_voltage_limit(12000);
+      lift.move_relative(-20.0 * 360.0, 100);
+    }
 
     if (master.get_digital_new_press(DIGITAL_R2)) {
       intake_running = !intake_running;
